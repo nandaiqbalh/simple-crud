@@ -9,8 +9,8 @@ import { Calendar } from '@/components/ui/calendar';
 import { CreateUserForm, UpdateUserForm, UserRole } from '@/entities/user.entity';
 import { format } from 'date-fns';
 import { CalendarIcon } from 'lucide-react';
-import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { cn } from '@/lib/utils';
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 
 interface UserFormProps {
   initialData?: UpdateUserForm;
@@ -160,6 +160,8 @@ export function UserForm({
                 }
               }}
               initialFocus
+              captionLayout="dropdown"
+              className="rounded-md border shadow-sm"
             />
           </PopoverContent>
         </Popover>
