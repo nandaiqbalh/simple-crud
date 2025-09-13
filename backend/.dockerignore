@@ -1,0 +1,14 @@
+tmp
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+.git
+.gitignore
+README.md
+Dockerfile*
+.dockerignore
+.air.toml

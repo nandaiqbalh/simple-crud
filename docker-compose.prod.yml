@@ -1,0 +1,40 @@
+services:
+  db:
+    container_name: db-prod
+    image: postgres:13
+    environment:
+      POSTGRES_USER: user
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: mydb
+    ports:
+      - "5432:5432"
+    volumes:
+      - pg_data_prod:/var/lib/postgresql/data
+
+  backend:
+    container_name: go-backend-prod
+    image: go-backend-prod:1.0.0
+    build:
+      context: ./backend
+      dockerfile: go.prod.dockerfile
+    ports:
+      - "8000:8000"
+    environment:
+      DATABASE_URL: "postgres://user:password@db:5432/mydb?sslmode=disable"
+    depends_on:
+      - db
+
+  frontend:
+    container_name: next-frontend-prod
+    image: next-frontend-prod:1.0.0
+    build:
+      context: ./frontend
+      dockerfile: next.prod.dockerfile
+    ports:
+      - "3000:3000"
+    depends_on:
+      - backend
+
+volumes:
+  pg_data_prod:
+    driver: local
