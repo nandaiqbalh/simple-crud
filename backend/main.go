@@ -79,7 +79,7 @@ func main() {
 		email TEXT NOT NULL UNIQUE,
 		role TEXT NOT NULL DEFAULT 'user',
 		birth DATE NOT NULL,
-		age INTEGER GENERATED ALWAYS AS (EXTRACT(YEAR FROM AGE(birth))) STORED,
+		age INTEGER,
 		timestamp TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 	)`)
 
@@ -221,19 +221,47 @@ func getUser(db *sql.DB) http.HandlerFunc {
 // createUser handler to create a new user
 func createUser(db *sql.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		var user User
-		if err := json.NewDecoder(r.Body).Decode(&user); err != nil {
+		var raw map[string]interface{}
+		if err := json.NewDecoder(r.Body).Decode(&raw); err != nil {
 			sendJSONResponse(w, false, http.StatusBadRequest, err.Error(), nil)
 			return
 		}
 
-		log.Printf("Query: INSERT INTO users (name, email, role, birth) VALUES (%s, %s, %s, %s) RETURNING id, age, timestamp", user.Name, user.Email, user.Role, user.Birth.Format("2006-01-02"))
-		err := db.QueryRow("INSERT INTO users (name, email, role, birth) VALUES ($1, $2, $3, $4) RETURNING id, age, timestamp", user.Name, user.Email, user.Role, user.Birth).Scan(&user.ID, &user.Age, &user.Timestamp)
+		// Parse birth date from string
+		birthStr, ok := raw["birth"].(string)
+		if !ok {
+			sendJSONResponse(w, false, http.StatusBadRequest, "Invalid birth format", nil)
+			return
+		}
+		birth, err := time.Parse("2006-01-02", birthStr)
+		if err != nil {
+			sendJSONResponse(w, false, http.StatusBadRequest, "Invalid birth date: "+err.Error(), nil)
+			return
+		}
+
+		user := User{
+			Name:  raw["name"].(string),
+			Email: raw["email"].(string),
+			Role:  raw["role"].(string),
+			Birth: birth,
+		}
+
+		log.Printf("[createUser] Received: %+v", user)
+		// Calculate age from birth
+		now := time.Now()
+		user.Age = now.Year() - user.Birth.Year()
+		if now.YearDay() < user.Birth.YearDay() {
+			user.Age--
+		}
+
+		log.Printf("Query: INSERT INTO users (name, email, role, birth, age) VALUES (%s, %s, %s, %s, %d) RETURNING id, age, timestamp", user.Name, user.Email, user.Role, user.Birth.Format("2006-01-02"), user.Age)
+		err = db.QueryRow("INSERT INTO users (name, email, role, birth, age) VALUES ($1, $2, $3, $4, $5) RETURNING id, age, timestamp", user.Name, user.Email, user.Role, user.Birth, user.Age).Scan(&user.ID, &user.Age, &user.Timestamp)
 		if err != nil {
 			sendJSONResponse(w, false, http.StatusInternalServerError, err.Error(), nil)
 			return
 		}
 
+		log.Printf("[createUser] Inserted: %+v", user)
 		sendJSONResponse(w, true, http.StatusCreated, "User created successfully", user)
 	}
 }
@@ -244,14 +272,41 @@ func updateUser(db *sql.DB) http.HandlerFunc {
 		params := mux.Vars(r)
 		id := params["id"]
 
-		var user User
-		if err := json.NewDecoder(r.Body).Decode(&user); err != nil {
+		var raw map[string]interface{}
+		if err := json.NewDecoder(r.Body).Decode(&raw); err != nil {
 			sendJSONResponse(w, false, http.StatusBadRequest, err.Error(), nil)
 			return
 		}
 
-		log.Printf("Query: UPDATE users SET name = %s, email = %s, role = %s, birth = %s WHERE id = %s", user.Name, user.Email, user.Role, user.Birth.Format("2006-01-02"), id)
-		result, err := db.Exec("UPDATE users SET name = $1, email = $2, role = $3, birth = $4 WHERE id = $5", user.Name, user.Email, user.Role, user.Birth, id)
+		// Parse birth date from string
+		birthStr, ok := raw["birth"].(string)
+		if !ok {
+			sendJSONResponse(w, false, http.StatusBadRequest, "Invalid birth format", nil)
+			return
+		}
+		birth, err := time.Parse("2006-01-02", birthStr)
+		if err != nil {
+			sendJSONResponse(w, false, http.StatusBadRequest, "Invalid birth date: "+err.Error(), nil)
+			return
+		}
+
+		user := User{
+			Name:  raw["name"].(string),
+			Email: raw["email"].(string),
+			Role:  raw["role"].(string),
+			Birth: birth,
+		}
+
+		log.Printf("[updateUser] Received: %+v", user)
+		// Calculate age from birth
+		now := time.Now()
+		user.Age = now.Year() - user.Birth.Year()
+		if now.YearDay() < user.Birth.YearDay() {
+			user.Age--
+		}
+
+		log.Printf("Query: UPDATE users SET name = %s, email = %s, role = %s, birth = %s, age = %d WHERE id = %s", user.Name, user.Email, user.Role, user.Birth.Format("2006-01-02"), user.Age, id)
+		result, err := db.Exec("UPDATE users SET name = $1, email = $2, role = $3, birth = $4, age = $5 WHERE id = $6", user.Name, user.Email, user.Role, user.Birth, user.Age, id)
 		if err != nil {
 			sendJSONResponse(w, false, http.StatusInternalServerError, err.Error(), nil)
 			return
@@ -274,6 +329,7 @@ func updateUser(db *sql.DB) http.HandlerFunc {
 			return
 		}
 
+		log.Printf("[updateUser] Updated: %+v", user)
 		sendJSONResponse(w, true, http.StatusOK, "User updated successfully", user)
 	}
 }

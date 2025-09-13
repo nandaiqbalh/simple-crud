@@ -30,7 +30,8 @@ export class UserMapper {
     };
   }
 
-  static toEntityList(dtos: UserDto[]): User[] {
+  static toEntityList(dtos: UserDto[] | null | undefined): User[] {
+    if (!dtos) return [];
     return dtos.map(this.toEntity);
   }
 
