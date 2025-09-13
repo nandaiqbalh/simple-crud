@@ -7,15 +7,21 @@ import (
 	"net/http"
 	"os"
 	"strconv"
+	"strings"
+	"time"
 
 	"github.com/gorilla/mux"
 	_ "github.com/lib/pq"
 )
 
 type User struct {
-	ID    int    `json:"id"`
-	Name  string `json:"name"`
-	Email string `json:"email"`
+	ID        int       `json:"id"`
+	Name      string    `json:"name"`
+	Email     string    `json:"email"`
+	Role      string    `json:"role"`
+	Birth     time.Time `json:"birth"`
+	Age       int       `json:"age"`
+	Timestamp time.Time `json:"timestamp"`
 }
 
 type APIResponse struct {
@@ -70,7 +76,11 @@ func main() {
 	_, err = db.Exec(`CREATE TABLE IF NOT EXISTS users (
 		id SERIAL PRIMARY KEY,
 		name TEXT NOT NULL,
-		email TEXT NOT NULL UNIQUE
+		email TEXT NOT NULL UNIQUE,
+		role TEXT NOT NULL DEFAULT 'user',
+		birth DATE NOT NULL,
+		age INTEGER GENERATED ALWAYS AS (EXTRACT(YEAR FROM AGE(birth))) STORED,
+		timestamp TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 	)`)
 
 	if err != nil {
@@ -122,11 +132,50 @@ func jsonContentTypeMiddleware(next http.Handler) http.Handler {
 	})
 }
 
-// getUsers handler to fetch all users
+// getUsers handler to fetch all users with search and sorting
 func getUsers(db *sql.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		log.Println("Query: SELECT id, name, email FROM users")
-		rows, err := db.Query("SELECT id, name, email FROM users")
+		// Get query parameters
+		search := r.URL.Query().Get("search")
+		sortBy := r.URL.Query().Get("sort")
+		order := r.URL.Query().Get("order")
+
+		// Build query
+		query := "SELECT id, name, email, role, birth, age, timestamp FROM users"
+		var args []interface{}
+		var conditions []string
+
+		// Add search conditions
+		if search != "" {
+			conditions = append(conditions, "(name ILIKE $1 OR email ILIKE $1 OR role ILIKE $1)")
+			args = append(args, "%"+search+"%")
+		}
+
+		if len(conditions) > 0 {
+			query += " WHERE " + strings.Join(conditions, " AND ")
+		}
+
+		// Add sorting
+		validSorts := map[string]string{
+			"name":      "name",
+			"email":     "email",
+			"role":      "role",
+			"age":       "age",
+			"timestamp": "timestamp",
+		}
+
+		if sortField, exists := validSorts[sortBy]; exists {
+			orderDir := "ASC"
+			if order == "desc" {
+				orderDir = "DESC"
+			}
+			query += " ORDER BY " + sortField + " " + orderDir
+		} else {
+			query += " ORDER BY timestamp DESC" // default sort
+		}
+
+		log.Printf("Query: %s, Args: %v", query, args)
+		rows, err := db.Query(query, args...)
 		if err != nil {
 			sendJSONResponse(w, false, http.StatusInternalServerError, err.Error(), nil)
 			return
@@ -136,7 +185,7 @@ func getUsers(db *sql.DB) http.HandlerFunc {
 		var users []User
 		for rows.Next() {
 			var user User
-			if err := rows.Scan(&user.ID, &user.Name, &user.Email); err != nil {
+			if err := rows.Scan(&user.ID, &user.Name, &user.Email, &user.Role, &user.Birth, &user.Age, &user.Timestamp); err != nil {
 				sendJSONResponse(w, false, http.StatusInternalServerError, err.Error(), nil)
 				return
 			}
@@ -154,8 +203,8 @@ func getUser(db *sql.DB) http.HandlerFunc {
 		id := params["id"]
 
 		var user User
-		log.Printf("Query: SELECT id, name, email FROM users WHERE id = %s", id)
-		err := db.QueryRow("SELECT id, name, email FROM users WHERE id = $1", id).Scan(&user.ID, &user.Name, &user.Email)
+		log.Printf("Query: SELECT id, name, email, role, birth, age, timestamp FROM users WHERE id = %s", id)
+		err := db.QueryRow("SELECT id, name, email, role, birth, age, timestamp FROM users WHERE id = $1", id).Scan(&user.ID, &user.Name, &user.Email, &user.Role, &user.Birth, &user.Age, &user.Timestamp)
 		if err != nil {
 			if err == sql.ErrNoRows {
 				sendJSONResponse(w, false, http.StatusNotFound, "User not found", nil)
@@ -178,8 +227,8 @@ func createUser(db *sql.DB) http.HandlerFunc {
 			return
 		}
 
-		log.Printf("Query: INSERT INTO users (name, email) VALUES (%s, %s) RETURNING id", user.Name, user.Email)
-		err := db.QueryRow("INSERT INTO users (name, email) VALUES ($1, $2) RETURNING id", user.Name, user.Email).Scan(&user.ID)
+		log.Printf("Query: INSERT INTO users (name, email, role, birth) VALUES (%s, %s, %s, %s) RETURNING id, age, timestamp", user.Name, user.Email, user.Role, user.Birth.Format("2006-01-02"))
+		err := db.QueryRow("INSERT INTO users (name, email, role, birth) VALUES ($1, $2, $3, $4) RETURNING id, age, timestamp", user.Name, user.Email, user.Role, user.Birth).Scan(&user.ID, &user.Age, &user.Timestamp)
 		if err != nil {
 			sendJSONResponse(w, false, http.StatusInternalServerError, err.Error(), nil)
 			return
@@ -201,8 +250,8 @@ func updateUser(db *sql.DB) http.HandlerFunc {
 			return
 		}
 
-		log.Printf("Query: UPDATE users SET name = %s, email = %s WHERE id = %s", user.Name, user.Email, id)
-		result, err := db.Exec("UPDATE users SET name = $1, email = $2 WHERE id = $3", user.Name, user.Email, id)
+		log.Printf("Query: UPDATE users SET name = %s, email = %s, role = %s, birth = %s WHERE id = %s", user.Name, user.Email, user.Role, user.Birth.Format("2006-01-02"), id)
+		result, err := db.Exec("UPDATE users SET name = $1, email = $2, role = $3, birth = $4 WHERE id = $5", user.Name, user.Email, user.Role, user.Birth, id)
 		if err != nil {
 			sendJSONResponse(w, false, http.StatusInternalServerError, err.Error(), nil)
 			return
@@ -218,7 +267,13 @@ func updateUser(db *sql.DB) http.HandlerFunc {
 			return
 		}
 
-		user.ID, _ = atoi(id)
+		// Get updated user data
+		err = db.QueryRow("SELECT id, name, email, role, birth, age, timestamp FROM users WHERE id = $1", id).Scan(&user.ID, &user.Name, &user.Email, &user.Role, &user.Birth, &user.Age, &user.Timestamp)
+		if err != nil {
+			sendJSONResponse(w, false, http.StatusInternalServerError, err.Error(), nil)
+			return
+		}
+
 		sendJSONResponse(w, true, http.StatusOK, "User updated successfully", user)
 	}
 }

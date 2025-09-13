@@ -10,8 +10,14 @@ RUN npm ci
 # Copy source code
 COPY . .
 
+# Build for development (to generate CSS)
+RUN npm run build
+
 # Expose port
 EXPOSE 3000
 
-# Jalankan development server
-CMD ["npm", "run", "dev"]
+# Set environment for development
+ENV NODE_ENV=development
+
+# Run development server with host binding
+CMD ["npm", "run", "dev", "--", "--hostname", "0.0.0.0"]
