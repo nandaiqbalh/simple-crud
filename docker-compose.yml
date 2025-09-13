@@ -1,0 +1,29 @@
+services:
+  db:
+    container_name: db
+    image: postgres:13
+    environment:
+      POSTGRES_USER: user
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: mydb
+    ports:
+      - "5432:5432"
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+
+  backend:
+    container_name: go-backend
+    image: go-backend:1.0.0
+    build:
+      context: ./backend
+      dockerfile: go.dockerfile
+    ports:
+      - "8000:8000"
+    environment:
+      DATABASE_URL: "postgres://user:password@db:5432/mydb?sslmode=disable"
+    depends_on:
+      - db
+
+volumes:
+  pg_data:
+    driver: local
